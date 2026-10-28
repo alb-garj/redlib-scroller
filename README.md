@@ -13,6 +13,11 @@
 - 🕵 Private: all requests are proxied through the server, including media
 - 🔒 Secure: strong [Content Security Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP) prevents browser requests to Reddit
 
+> This fork adds optional masonry and full-screen scroller listing views. The
+> default Redlib listing stays unchanged and works without JavaScript; the new
+> views are available from the listing toolbar or with `?view=masonry` and
+> `?view=scroll`.
+
 ---
 
 ## Table of Contents

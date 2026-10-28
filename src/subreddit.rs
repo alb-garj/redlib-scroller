@@ -28,6 +28,8 @@ struct SubredditTemplate {
 	prefs: Preferences,
 	url: String,
 	redirect_url: String,
+	/// The listing presentation: "list", "masonry" or "scroll".
+	view: String,
 	/// Whether the subreddit itself is filtered.
 	is_filtered: bool,
 	/// Whether all fetched posts are filtered (to differentiate between no posts fetched in the first place,
@@ -36,6 +38,17 @@ struct SubredditTemplate {
 	/// Whether all posts were hidden because they are NSFW (and user has disabled show NSFW)
 	all_posts_hidden_nsfw: bool,
 	no_posts: bool,
+}
+
+/// Rendered when the client asks for more items with `?fragment=1`.
+/// It contains only the feed items, so the client can append them without
+/// duplicating the templates in JavaScript.
+#[derive(Template)]
+#[template(path = "feed_fragment.html")]
+struct FeedFragmentTemplate {
+	posts: Vec<Post>,
+	view: String,
+	prefs: Preferences,
 }
 
 #[derive(Template)]
@@ -60,6 +73,19 @@ struct WallTemplate {
 
 static GEO_FILTER_MATCH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"geo_filter=(?<region>\w+)").unwrap());
 
+/// Remove Redlib-only query parameters before forwarding a listing request to
+/// Reddit. Redlib itself can safely ignore them, but keeping the upstream URL
+/// clean avoids surprises with caches and API proxies.
+fn strip_scroller_params(query: &str) -> String {
+	let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+	for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
+		if &*key != "view" && &*key != "fragment" {
+			serializer.append_pair(&key, &value);
+		}
+	}
+	serializer.finish()
+}
+
 // SERVICES
 pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 	// Build Reddit API path
@@ -69,7 +95,19 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 	let front_page = setting(&req, "front_page");
 	let remove_default_feeds = setting(&req, "remove_default_feeds") == "on";
 	let post_sort = req.cookie("post_sort").map_or_else(|| "hot".to_string(), |c| c.value().to_string());
-	let sort = req.param("sort").unwrap_or_else(|| req.param("id").unwrap_or(post_sort));
+	let query_params = format!("?{query}");
+	let sort = req.param("sort").or_else(|| req.param("id")).or_else(|| param(&query_params, "sort")).unwrap_or(post_sort);
+	let sort = if matches!(sort.as_str(), "hot" | "new" | "top" | "rising" | "controversial" | "best") {
+		sort
+	} else {
+		"hot".to_string()
+	};
+	let view = match param(&query_params, "view").as_deref() {
+		Some("masonry") => "masonry".to_string(),
+		Some("scroll") => "scroll".to_string(),
+		_ => "list".to_string(),
+	};
+	let fragment = param(&query_params, "fragment").as_deref() == Some("1");
 
 	let sub_name = req.param("sub").unwrap_or(if front_page == "default" || front_page.is_empty() {
 		if subscribed.is_empty() {
@@ -141,13 +179,17 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 		params.push_str(&format!("&geo_filter={geo_filter}"));
 	}
 
-	let path = format!("/r/{}/{sort}.json?{}{params}", sub_name.replace('+', "%2B"), req.uri().query().unwrap_or_default());
+	let clean_query = strip_scroller_params(&query);
+	let path = format!("/r/{}/{sort}.json?{}{params}", sub_name.replace('+', "%2B"), clean_query);
 	let url = String::from(req.uri().path_and_query().map_or("", |val| val.as_str()));
 	let redirect_url = url[1..].replace('?', "%3F").replace('&', "%26").replace('+', "%2B");
 	let filters = get_filters(&req);
 
 	// If all requested subs are filtered, we don't need to fetch posts.
 	if sub_name.split('+').all(|s| filters.contains(s)) {
+		if fragment {
+			return Ok(fragment_response(Vec::new(), view, Preferences::new(&req), String::new()));
+		}
 		Ok(template(&SubredditTemplate {
 			sub,
 			posts: Vec::new(),
@@ -156,6 +198,7 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 			prefs: Preferences::new(&req),
 			url,
 			redirect_url,
+			view,
 			is_filtered: true,
 			all_posts_filtered: false,
 			all_posts_hidden_nsfw: false,
@@ -171,6 +214,9 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 					posts.sort_by_key(|post| std::cmp::Reverse(post.created_ts));
 					posts.sort_by_key(|post| std::cmp::Reverse(post.flags.stickied));
 				}
+				if fragment {
+					return Ok(fragment_response(posts, view, Preferences::new(&req), after));
+				}
 				Ok(template(&SubredditTemplate {
 					sub,
 					posts,
@@ -179,6 +225,7 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 					prefs: Preferences::new(&req),
 					url,
 					redirect_url,
+					view,
 					is_filtered: false,
 					all_posts_filtered,
 					all_posts_hidden_nsfw,
@@ -193,6 +240,25 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 			},
 		}
 	}
+}
+
+fn fragment_response(posts: Vec<Post>, view: String, prefs: Preferences, after: String) -> Response<Body> {
+	if view == "list" {
+		return Response::builder()
+			.status(400)
+			.header("content-type", "text/plain")
+			.body("Fragment requests require view=masonry or view=scroll".into())
+			.unwrap_or_default();
+	}
+
+	let body = FeedFragmentTemplate { posts, view, prefs }.render().unwrap_or_default();
+	let mut builder = Response::builder().status(200).header("content-type", "text/html").header("Cache-Control", "no-store");
+
+	if !after.is_empty() {
+		builder = builder.header("X-Next-After", after);
+	}
+
+	builder.body(body.into()).unwrap_or_default()
 }
 
 pub fn quarantine(req: &Request<Body>, sub: String, restriction: &str) -> Response<Body> {
@@ -708,6 +774,13 @@ fn get_mime_type(url: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn test_strip_scroller_params() {
+		assert_eq!(strip_scroller_params("view=masonry&after=t3_abc&fragment=1"), "after=t3_abc");
+		assert_eq!(strip_scroller_params("sort=top&t=day&view=scroll"), "sort=top&t=day");
+		assert_eq!(strip_scroller_params(""), "");
+	}
 
 	#[tokio::test(flavor = "multi_thread")]
 	async fn test_fetching_subreddit() {
