@@ -9,7 +9,7 @@ body %}
         <form id="sort">
             <div id="listing_options">
                 {% call utils::sort(["/user/", user.name.as_str()].concat(),
-                ["overview", "comments", "submitted"], listing) %}
+                ["overview", "comments", "submitted"], listing, "") %}
             </div>
             <select id="sort_select" name="sort">
                 {% call utils::options(sort.0, ["hot", "new", "top",

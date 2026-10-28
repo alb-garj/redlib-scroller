@@ -7,6 +7,12 @@
 	{% else %}Redlib{% endif %}
 {% endblock %}
 
+{% block body_class %}{% if view == "masonry" %}view-masonry{% else if view == "scroll" %}view-scroll{% endif %}{% endblock %}
+
+{% block extra_head %}
+	<link rel="stylesheet" type="text/css" href="/scroller.css?v={{ env!("CARGO_PKG_VERSION") }}">
+{% endblock %}
+
 {% block search %}
 	{% call utils::search(["/r/", sub.name.as_str()].concat(), "") %}
 {% endblock %}
@@ -16,15 +22,18 @@
 {% endblock %}
 
 {% block body %}
-	<main>
+	<main class="view-{{ view }}">
 		{% if !is_filtered %}
 		<div id="column_one">
+			{% if view != "scroll" %}
 			<form id="sort">
+				<input type="hidden" name="sort" value="{{ sort.0 }}">
+				<input type="hidden" name="view" value="{{ view }}">
 				<div id="sort_options">
 					{% if sub.name.is_empty() %}
-						{% call utils::sort("", ["hot", "new", "top", "rising", "controversial"], sort.0) %}
+						{% call utils::sort("", ["hot", "new", "top", "rising", "controversial"], sort.0, view) %}
 					{% else %}
-						{% call utils::sort(["/r/", sub.name.as_str()].concat(), ["hot", "new", "top", "rising", "controversial"], sort.0) %}
+						{% call utils::sort(["/r/", sub.name.as_str()].concat(), ["hot", "new", "top", "rising", "controversial"], sort.0, view) %}
 					{% endif %}
 				</div>
 				{% if sort.0 == "top" || sort.0 == "controversial" %}<select id="timeframe" name="t" title="Timeframe">
@@ -40,12 +49,82 @@
 				{% endif %}
 			</form>
 
+			{% if view == "list" %}
+			<div id="view_options">
+				{% call utils::view_switch(sort.0, sort.1, view) %}
+			</div>
+			{% endif %}
+
 			{% if sub.name.contains("+") %}
 				<form action="/r/{{ sub.name }}/subscribe?redirect={{ redirect_url }}" method="POST">
 					<button id="multisub" class="subscribe" title="Subscribe to each sub in this multireddit">Subscribe to Multireddit</button>
 				</form>
 			{% endif %}
+			{% endif %}
 
+			{% if view == "masonry" %}
+			<div id="masonry-view" class="scroller-view masonry-view" data-view="masonry" data-next-after="{{ ends.1 }}" data-autoplay-default="{{ prefs.autoplay_videos }}">
+				<div class="scroller-toolbar">
+					<div class="scroller-toolbar-left">
+						{% call utils::view_switch(sort.0, sort.1, view) %}
+					</div>
+					<div class="scroller-toolbar-right">
+						{% call utils::view_settings() %}
+					</div>
+				</div>
+
+				{% if all_posts_hidden_nsfw %}
+				<div class="scroller-notice">All posts are hidden because they are NSFW. Enable "Show NSFW posts" in settings to view.</div>
+				{% else if all_posts_filtered %}
+				<div class="scroller-notice">(All content on this page has been filtered)</div>
+				{% else if no_posts %}
+				<div class="scroller-notice">No posts were found.</div>
+				{% endif %}
+
+				<div id="masonry-feed" class="masonry-feed" data-masonry-feed>
+					{% call utils::feed(posts, view) %}
+				</div>
+				<div class="feed-sentinel" data-feed-sentinel><span>Loading more…</span></div>
+			</div>
+
+			<div id="scroller-overlay" class="scroller-overlay" data-scroller-overlay role="dialog" aria-label="Media scroller" hidden>
+				<div class="scroller-topbar">
+					<button class="scroller-close" type="button" data-scroller-close aria-label="Close scroller">×</button>
+					<span class="scroller-counter" data-scroller-counter></span>
+					<div class="scroller-topbar-actions">
+						{% call utils::view_switch(sort.0, sort.1, "scroll") %}
+						{% call utils::view_settings() %}
+					</div>
+				</div>
+				<div id="scroller-overlay-feed" class="scroller-feed" data-scroller-feed></div>
+				<div class="scroller-loader" data-scroller-loader hidden>Loading…</div>
+			</div>
+			{% else if view == "scroll" %}
+			<div id="scroller-page" class="scroller-overlay scroller-page" data-view="scroll" data-next-after="{{ ends.1 }}" data-autoplay-default="{{ prefs.autoplay_videos }}">
+				<div class="scroller-topbar">
+					<a class="scroller-close" href="?sort={{ sort.0 }}&t={{ sort.1 }}&view=masonry" title="Back to masonry" aria-label="Back to masonry">←</a>
+					<span class="scroller-counter" data-scroller-counter></span>
+					<div class="scroller-topbar-actions">
+						{% call utils::view_switch(sort.0, sort.1, view) %}
+						{% call utils::view_settings() %}
+					</div>
+				</div>
+
+				{% if all_posts_hidden_nsfw %}
+				<div class="scroller-notice scroller-notice-overlay">All posts are hidden because they are NSFW. Enable "Show NSFW posts" in settings to view.</div>
+				{% else if all_posts_filtered %}
+				<div class="scroller-notice scroller-notice-overlay">(All content on this page has been filtered)</div>
+				{% else if no_posts %}
+				<div class="scroller-notice scroller-notice-overlay">No posts were found.</div>
+				{% endif %}
+
+				<div id="scroller-feed" class="scroller-feed" data-scroller-feed>
+					{% call utils::feed(posts, view) %}
+					<div class="feed-sentinel scroller-sentinel" data-feed-sentinel></div>
+				</div>
+				<div class="scroller-loader" data-scroller-loader hidden>Loading…</div>
+			</div>
+			{% else %}
 			{% if all_posts_hidden_nsfw %}
 			<center>All posts are hidden because they are NSFW. Enable "Show NSFW posts" in settings to view.</center>
 			{% endif %}
@@ -80,9 +159,21 @@
 				<a href="?sort={{ sort.0 }}&t={{ sort.1 }}&after={{ ends.1 }}" accesskey="N">NEXT</a>
 				{% endif %}
 			</footer>
+			{% endif %}
+		</div>
+		{% else %}
+		{% if view != "list" %}
+		<div id="column_one">
+			<div class="scroller-toolbar">
+				<div class="scroller-toolbar-left">
+					{% call utils::view_switch(sort.0, sort.1, view) %}
+				</div>
+			</div>
+			<div class="scroller-notice">(Content from r/{{ sub.name }} has been filtered)</div>
 		</div>
 		{% endif %}
-		{% if is_filtered || (!sub.name.is_empty() && sub.name != "all" && sub.name != "popular" && !sub.name.contains("+")) && prefs.hide_sidebar_and_summary != "on" %}
+		{% endif %}
+		{% if view == "list" && (is_filtered || (!sub.name.is_empty() && sub.name != "all" && sub.name != "popular" && !sub.name.contains("+")) && prefs.hide_sidebar_and_summary != "on") %}
 		<aside>
 			{% if is_filtered %}
 				<center>(Content from r/{{ sub.name }} has been filtered)</center>
@@ -157,4 +248,10 @@
 		</aside>
 		{% endif %}
 	</main>
+{% endblock %}
+
+{% block scripts %}
+	{% if view == "masonry" || view == "scroll" %}
+	<script src="/scroller.js?v={{ env!("CARGO_PKG_VERSION") }}" defer></script>
+	{% endif %}
 {% endblock %}

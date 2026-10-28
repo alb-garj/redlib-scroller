@@ -27,11 +27,12 @@
 		<link rel="manifest" type="application/json" href="/manifest.json">
 		<link rel="shortcut icon" type="image/x-icon" href="/favicon.ico"> 
 		<link rel="stylesheet" type="text/css" href="/style.css?v={{ env!("CARGO_PKG_VERSION") }}">
+		{% block extra_head %}{% endblock %}
 		<!-- Video quality -->
 		<div id="video_quality" data-value="{{ prefs.video_quality }}"></div>
 		{% endblock %}
 		</head>
-	<body class="
+	<body class="{% block body_class %}{% endblock %}
 		{% if prefs.layout != "" %}{{ prefs.layout }}{% endif %}
 		{% if prefs.wide == "on" %} wide{% endif %}
 		{% if prefs.theme != "system" %} {{ prefs.theme }}{% endif %}
@@ -81,5 +82,6 @@
 				</div>
 			</footer>
 		{% endblock %}
+		{% block scripts %}{% endblock %}
 	</body>
 </html>
